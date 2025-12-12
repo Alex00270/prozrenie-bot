@@ -1,6 +1,6 @@
 # main.py
 from aiogram import Bot, Dispatcher, Router, types
-from aiogram.filters import F
+from aiogram import F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
