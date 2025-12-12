@@ -1,164 +1,143 @@
-import asyncio
-import logging
+# main.py
 import os
-import sys
+import logging
+import asyncio
+from typing import Any
 
-from aiogram import Bot, Dispatcher, F, Router
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
-from aiogram.filters import CommandStart, Command
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-
-# --- 1. CONFIGURATION & LOGGING ---
-# Настройка логирования для Render
-logging.basicConfig(level=logging.INFO, stream=sys.stdout)
-logger = logging.getLogger(__name__)
-
-# Получаем токен из переменных окружения
-TOKEN = os.getenv("TOKEN")
-
-print("DEBUG 0. Init: Script started. Checking token...", flush=True)
+# try to get TOKEN from config.py first (as you requested), otherwise from env
+try:
+    import config  # config.py должен содержать строку: TOKEN = os.getenv("TOKEN")
+    TOKEN = config.TOKEN
+except Exception:
+    TOKEN = os.getenv("TOKEN")
 
 if not TOKEN:
-    print("CRITICAL: TOKEN is missing! Check Environment Variables.", flush=True)
-    sys.exit(1)
+    raise RuntimeError("TOKEN is not set. Put TOKEN into config.py or set environment variable TOKEN.")
 
-# --- 2. STATES (FSM) ---
-class BrandPositioning(StatesGroup):
-    waiting_for_name = State()        # 1. Название бренда
-    waiting_for_description = State() # 2. Текущее описание
-    waiting_for_role = State()        # 3. Роль в жизни клиента
-    waiting_for_category = State()    # 4. Категория
-    waiting_for_association = State() # 5. Желаемая ассоциация
+from aiogram import Bot, Dispatcher, types
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-# --- 3. HANDLERS ---
-router = Router()
+# Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+logger = logging.getLogger(__name__)
 
-@router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext):
-    print(f"DEBUG 1. Handler: /start received from {message.from_user.id}", flush=True)
-    
-    await state.clear()
-    
-    welcome_text = (
-        "Привет! Я бот для распаковки позиционирования бренда.\n"
-        "Мы пройдем 5 шагов, чтобы сформулировать суть твоего проекта.\n\n"
-        "Готов начать?"
-    )
-    
-    kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="🚀 Начать распаковку")]],
-        resize_keyboard=True,
-        one_time_keyboard=True
-    )
-    
-    await message.answer(welcome_text, reply_markup=kb)
+# Bot + Dispatcher
+bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
 
-@router.message(F.text == "🚀 Начать распаковку")
-async def start_survey(message: Message, state: FSMContext):
-    print(f"DEBUG 2. Step 1: Asking for Brand Name", flush=True)
+# FSM states for 5-step survey
+class Survey(StatesGroup):
+    q1_brand_name = State()
+    q2_current_description = State()
+    q3_role_in_customer_life = State()
+    q4_category = State()
+    q5_desired_association = State()
+
+# Keyboard to start survey
+start_kb = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="Начать 5-шаговый опрос", callback_data="survey_begin")]
+])
+
+# /start handler
+async def cmd_start(message: types.Message):
     await message.answer(
-        "<b>Шаг 1/5.</b>\nНапиши название твоего бренда или проекта.",
-        reply_markup=ReplyKeyboardRemove()
+        "<b>Привет!</b>\nЯ — бот для 5-шаговой диагностики позиционирования бренда.\nНажми кнопку, чтобы начать.",
+        reply_markup=start_kb
     )
-    await state.set_state(BrandPositioning.waiting_for_name)
 
-# Шаг 1 -> Шаг 2
-@router.message(BrandPositioning.waiting_for_name)
-async def process_name(message: Message, state: FSMContext):
-    answer = message.text
-    print(f"DEBUG 3. Received Name: {answer}", flush=True)
-    
-    await state.update_data(brand_name=answer)
-    
-    await message.answer(
-        "<b>Шаг 2/5.</b>\nКак ты сейчас описываешь свой продукт в одном предложении? (Текущее описание)"
-    )
-    await state.set_state(BrandPositioning.waiting_for_description)
+# Callback to begin survey -> set first state
+async def cb_begin(call: types.CallbackQuery):
+    await call.answer()  # remove 'loading' on client
+    await call.message.answer("Вопрос 1/5 — Название бренда:")
+    await dp.storage.set_state(chat=call.message.chat.id, state=Survey.q1_brand_name)
+    # or: await Survey.q1_brand_name.set()
 
-# Шаг 2 -> Шаг 3
-@router.message(BrandPositioning.waiting_for_description)
-async def process_description(message: Message, state: FSMContext):
-    print(f"DEBUG 4. Received Description", flush=True)
-    await state.update_data(description=message.text)
-    
-    await message.answer(
-        "<b>Шаг 3/5.</b>\nКакую роль твой продукт играет в жизни клиента? (Например: спасатель, наставник, инструмент, друг)"
-    )
-    await state.set_state(BrandPositioning.waiting_for_role)
+# Handlers for each step
+async def handle_q1(message: types.Message, state: FSMContext):
+    await state.update_data(brand_name=message.text.strip())
+    await message.answer("Вопрос 2/5 — Краткое текущее описание бренда:")
+    await dp.storage.set_state(chat=message.chat.id, state=Survey.q2_current_description)
 
-# Шаг 3 -> Шаг 4
-@router.message(BrandPositioning.waiting_for_role)
-async def process_role(message: Message, state: FSMContext):
-    print(f"DEBUG 5. Received Role", flush=True)
-    await state.update_data(role=message.text)
-    
-    await message.answer(
-        "<b>Шаг 4/5.</b>\nВ какой рыночной категории ты работаешь? (Например: онлайн-образование, кофейня, консалтинг)"
-    )
-    await state.set_state(BrandPositioning.waiting_for_category)
+async def handle_q2(message: types.Message, state: FSMContext):
+    await state.update_data(current_description=message.text.strip())
+    await message.answer("Вопрос 3/5 — Какую роль бренд играет в жизни клиента?")
+    await dp.storage.set_state(chat=message.chat.id, state=Survey.q3_role_in_customer_life)
 
-# Шаг 4 -> Шаг 5
-@router.message(BrandPositioning.waiting_for_category)
-async def process_category(message: Message, state: FSMContext):
-    print(f"DEBUG 6. Received Category", flush=True)
-    await state.update_data(category=message.text)
-    
-    await message.answer(
-        "<b>Шаг 5/5.</b>\nС каким словом или эмоцией ты хочешь ассоциироваться у клиента в первую очередь?"
-    )
-    await state.set_state(BrandPositioning.waiting_for_association)
+async def handle_q3(message: types.Message, state: FSMContext):
+    await state.update_data(role_in_life=message.text.strip())
+    await message.answer("Вопрос 4/5 — Категория (например: FMCG, SaaS, Retail и т.д.):")
+    await dp.storage.set_state(chat=message.chat.id, state=Survey.q4_category)
 
-# Финал
-@router.message(BrandPositioning.waiting_for_association)
-async def process_association(message: Message, state: FSMContext):
-    print(f"DEBUG 7. Finishing survey", flush=True)
-    await state.update_data(association=message.text)
-    
+async def handle_q4(message: types.Message, state: FSMContext):
+    await state.update_data(category=message.text.strip())
+    await message.answer("Вопрос 5/5 — Какая желаемая ассоциация/эмоция у клиента при упоминании бренда?")
+    await dp.storage.set_state(chat=message.chat.id, state=Survey.q5_desired_association)
+
+async def handle_q5(message: types.Message, state: FSMContext):
+    await state.update_data(desired_association=message.text.strip())
+
     data = await state.get_data()
-    
+    # build result summary
     summary = (
-        "✅ <b>Распаковка завершена!</b>\n\n"
-        f"1. <b>Бренд:</b> {data.get('brand_name')}\n"
-        f"2. <b>Суть:</b> {data.get('description')}\n"
-        f"3. <b>Роль:</b> {data.get('role')}\n"
-        f"4. <b>Ниша:</b> {data.get('category')}\n"
-        f"5. <b>Ассоциация:</b> {data.get('association')}\n\n"
-        "<i>(Здесь в будущем подключим AI для генерации стратегии)</i>"
+        f"<b>Результаты 5-шагового опроса</b>\n\n"
+        f"<b>1) Название бренда:</b> {data.get('brand_name', '—')}\n"
+        f"<b>2) Текущее описание:</b> {data.get('current_description', '—')}\n"
+        f"<b>3) Роль в жизни клиента:</b> {data.get('role_in_life', '—')}\n"
+        f"<b>4) Категория:</b> {data.get('category', '—')}\n"
+        f"<b>5) Желаемая ассоциация:</b> {data.get('desired_association', '—')}\n\n"
+        f"Спасибо! Если нужно — могу предложить короткий позиционирующий слоган на основе этих ответов. "
+        f"Напиши /start для повторного опроса."
     )
-    
+
     await message.answer(summary)
     await state.clear()
 
-# --- 4. BOT SETUP & ENTRY POINT ---
+# Catch-all text handler for when user sends text outside expected states
+async def fallback_text(message: types.Message):
+    await message.answer("Для запуска опроса отправь /start и нажми кнопку 'Начать 5-шаговый опрос'.")
+
+# Error handler
+async def on_error(update: types.Update, error: Exception):
+    logger.exception("Произошла ошибка: %s", error)
+    # Try to notify admin/chat if needed — be careful with token/IDs in prod.
+
+# Register handlers
+def register_handlers():
+    dp.message.register(cmd_start, Command(commands=["start", "help"]))
+    dp.callback_query.register(cb_begin, lambda c: c.data == "survey_begin")
+    dp.message.register(handle_q1, state=Survey.q1_brand_name)
+    dp.message.register(handle_q2, state=Survey.q2_current_description)
+    dp.message.register(handle_q3, state=Survey.q3_role_in_customer_life)
+    dp.message.register(handle_q4, state=Survey.q4_category)
+    dp.message.register(handle_q5, state=Survey.q5_desired_association)
+    dp.message.register(fallback_text)  # last - fallback
+
+# Startup & shutdown events
+async def on_startup():
+    logger.info("Бот запускается...")
+
+async def on_shutdown():
+    logger.info("Шатдаун: закрываю соединение с ботом...")
+    await bot.session.close()
+
 async def main():
-    print("DEBUG 8. Setup: Initializing Bot and Dispatcher...", flush=True)
-    
-    # Инициализация бота с новым синтаксисом (aiogram 3.7+)
-    bot = Bot(
-        token=TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-    )
-    
-    dp = Dispatcher(storage=MemoryStorage())
-    dp.include_router(router)
-    
-    # Удаляем вебхуки, чтобы не было конфликтов при поллинге
-    await bot.delete_webhook(drop_pending_updates=True)
-    
-    print("DEBUG 9. Start: Polling started...", flush=True)
+    register_handlers()
     try:
+        await on_startup()
+        # start polling
         await dp.start_polling(bot)
-    except Exception as e:
-        print(f"CRITICAL ERROR during polling: {e}", flush=True)
+    finally:
+        await on_shutdown()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Bot stopped manually", flush=True)
-    except Exception as e:
-        print(f"CRITICAL SYSTEM ERROR: {e}", flush=True)
+    asyncio.run(main())
