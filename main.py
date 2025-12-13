@@ -12,7 +12,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-import google.generativeai as genai
+from google import genai
+from google.genai.types import GenerateContentConfig, HttpOptions
+
 
 # --- 1. CONFIGURATION & LOGGING ---
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
@@ -20,6 +22,16 @@ logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+if not GEMINI_API_KEY:
+    print("WARNING: GEMINI_API_KEY is missing!", flush=True)
+    sys.exit(1)
+
+client = genai.Client(
+    api_key=GEMINI_API_KEY,
+    http_options=HttpOptions(api_version="v1"),
+)
+
 
 print("DEBUG 0. Init: Script started.", flush=True)
 
@@ -34,7 +46,7 @@ else:
     genai.configure(api_key=GEMINI_API_KEY)
 
 # --- 2. DYNAMIC MODEL SELECTION (GEMMA LOGIC) ---
-CURRENT_MODEL_NAME = "models/gemini-1.5-flash" # Fallback на всякий случай
+CURRENT_MODEL_NAME = "models/gemma-3-27b-it" # Fallback на всякий случай
 
 def select_best_model():
     global CURRENT_MODEL_NAME
