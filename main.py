@@ -13,7 +13,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
-# --- ВАЖНО: ПРАВИЛЬНЫЙ ИМПОРТ ДЛЯ ТВОЕГО REQUIREMENTS.TXT ---
+# Импортируем веб-сервер для Render
+from aiohttp import web
+
 import google.generativeai as genai
 
 # --- 1. CONFIGURATION & LOGGING ---
@@ -22,27 +24,23 @@ logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# Render автоматически дает порт, или берем 8080
+PORT = int(os.getenv("PORT", 8080))
 
 print("DEBUG 0. Init: Script started.", flush=True)
 
-# Проверка ключей
-if not TOKEN:
-    print("CRITICAL: TOKEN is missing!", flush=True)
-    sys.exit(1)
-
-if not GEMINI_API_KEY:
-    print("CRITICAL: GEMINI_API_KEY is missing!", flush=True)
+if not TOKEN or not GEMINI_API_KEY:
+    print("CRITICAL: Keys missing!", flush=True)
     sys.exit(1)
 else:
-    # Инициализация (работает только с google-generativeai)
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         print("DEBUG 0.1. Google AI configured successfully.", flush=True)
     except Exception as e:
-        print(f"CRITICAL: Google AI Configure Failed: {e}", flush=True)
+        print(f"CRITICAL: Google AI Error: {e}", flush=True)
         sys.exit(1)
 
-# --- 2. DYNAMIC MODEL SELECTION ---
+# --- 2. MODEL SELECTION ---
 CURRENT_MODEL_NAME = "models/gemini-1.5-flash"
 
 def select_best_model():
@@ -50,26 +48,21 @@ def select_best_model():
     print("🔎 Scanning available Google models...", flush=True)
     try:
         all_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        # Ищем Gemma (она крутая и бесплатная в рамках лимитов)
         gemma_candidates = [m for m in all_models if "gemma" in m.lower() and "it" in m.lower()]
         
         if gemma_candidates:
-            # Сортировка по размеру (27b > 9b)
+            # Сортировка (27b > 9b)
             gemma_candidates.sort(key=lambda x: int(re.search(r'(\d+)b', x.lower()).group(1)) if re.search(r'(\d+)b', x.lower()) else 0, reverse=True)
             CURRENT_MODEL_NAME = gemma_candidates[0]
             print(f"   🏆 Found Gemma: {CURRENT_MODEL_NAME}", flush=True)
         else:
-            # Если нет, берем Gemini
-            print("   ⚠️ Gemma not found. Looking for Gemini...", flush=True)
+            print("   ⚠️ Gemma not found. Using Gemini.", flush=True)
             if any("1.5-pro" in m for m in all_models):
                 CURRENT_MODEL_NAME = next(m for m in all_models if "1.5-pro" in m)
             elif any("1.5-flash" in m for m in all_models):
                 CURRENT_MODEL_NAME = next(m for m in all_models if "1.5-flash" in m)
-            print(f"   ℹ️ Selected: {CURRENT_MODEL_NAME}", flush=True)
-
     except Exception as e:
-        print(f"   ❌ Model Scan Failed: {e}", flush=True)
+        print(f"   ❌ Scan Failed: {e}", flush=True)
 
 select_best_model()
 
@@ -141,7 +134,7 @@ async def finish(message: Message, state: FSMContext):
     await state.update_data(explanation_test=message.text)
     data = await state.get_data()
     
-    wait_msg = await message.answer("⏳ Анализирую...")
+    wait_msg = await message.answer(f"⏳ Анализирую ({CURRENT_MODEL_NAME.split('/')[-1]})...")
     
     full_prompt = (f"{SYSTEM_PROMPT}\n\nDATA:\n"
                    f"Audience: {data.get('audience')}\nProblem: {data.get('problem')}\n"
@@ -158,11 +151,31 @@ async def finish(message: Message, state: FSMContext):
         await wait_msg.delete()
         await state.clear()
 
+# --- 6. DUMMY SERVER FOR RENDER ---
+async def health_check(request):
+    return web.Response(text="Bot is alive and running!")
+
+async def start_dummy_server():
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    # Render передает PORT через переменные окружения, нужно слушать именно его
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
+    print(f"DEBUG. Dummy server started on port {PORT}", flush=True)
+
+# --- 7. MAIN ---
 async def main():
     bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
     await bot.delete_webhook(drop_pending_updates=True)
+    
+    # Запускаем и сервер (чтобы Render не ругался), и бота
+    await start_dummy_server()
+    
+    print("DEBUG. Polling started...", flush=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
