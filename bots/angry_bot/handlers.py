@@ -46,7 +46,15 @@ async def cmd_start(message: Message, bot: Bot):
     bot_info = await bot.get_me()
     
     await db.add_user(user.id, user.username, user.full_name, bot_info.id)
-    await message.answer("Ну что, пришел за критикой? Я MySkepticBot. Пиши идею, я разнесу её в пух и прах.")
+    
+    # Формируем приветствие с указанием модели
+    text = (
+        f"Ну что, пришел за критикой? Я MySkepticBot.\n"
+        f"🧠 Мои текущие мозги: <b>{CURRENT_MODEL_NAME}</b>\n\n"
+        f"Пиши свою идею, я разнесу её в пух и прах."
+    )
+    
+    await message.answer(text)
 
 @router.message()
 async def handle_message(message: Message):
