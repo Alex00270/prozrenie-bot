@@ -8,67 +8,35 @@ from database import db
 
 router = Router()
 
-# --- 1. НАСТРОЙКА КЛЮЧА ---
-# (Для angry_bot раскомментируйте вторую строку)
-# api_key = os.getenv("GEMINI_API_KEY_2") or os.getenv("GEMINI_API_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# КЛЮЧ: Пытается взять ВТОРОЙ, если нет — берет первый
+api_key = os.getenv("GEMINI_API_KEY_2") or os.getenv("GEMINI_API_KEY")
+if api_key:
+    genai.configure(api_key=api_key)
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-
-# --- 2. УМНЫЙ ВЫБОР (Как в вашем тестере + Математика) ---
+# --- ЛОГИКА ПОИСКА (Та же самая) ---
 def select_best_model():
-    print("🔍 СКАНЕР МОДЕЛЕЙ (Запуск...)", flush=True)
+    print("🔍 SKEPTIC: Сканирую модели...", flush=True)
     try:
-        # Получаем список (как в вашем скрипте)
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        all_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         
-        # Функция оценки крутости модели
-        def get_model_score(name):
+        def get_score(name):
             score = 0
             name = name.lower()
-            
-            # --- GEMMA (Любимая) ---
             if "gemma" in name:
-                score += 1000 # База для Gemma
-                
-                # Ищем размер (27b, 9b, 2b)
-                # re.search найдет цифру перед 'b'. 27b даст 27.
+                score += 1000
                 size = re.search(r'(\d+)b', name)
-                if size:
-                    score += int(size.group(1)) * 10  # 27b -> +270 очков
-                
-                # Ищем версию (gemma-2, gemma-3)
-                ver = re.search(r'gemma-(\d)', name)
-                if ver:
-                    score += int(ver.group(1)) * 50   # v3 -> +150 очков
-
-            # --- GEMINI (Запасная) ---
-            elif "gemini" in name:
-                score += 500
-                if "pro" in name: score += 100
-                if "1.5" in name: score += 50
-            
+                if size: score += int(size.group(1)) * 10
+                if "gemma-3" in name: score += 50
             return score
 
-        # Сортируем список: у кого больше очков — тот первый
-        available_models.sort(key=get_model_score, reverse=True)
-        
-        if available_models:
-            best = available_models[0]
-            print(f"🏆 ИТОГ: Выбрана {best} (Очков: {get_model_score(best)})", flush=True)
-            return best
-            
-    except Exception as e:
-        print(f"❌ Ошибка сканера: {e}", flush=True)
-
-    # Если вообще всё упало (интернета нет, ключ сгорел), только тогда возвращаем строку
+        all_models.sort(key=get_score, reverse=True)
+        if all_models: return all_models[0]
+    except: pass
     return "models/gemini-1.5-pro"
 
-# Запускаем выбор
 CURRENT_MODEL_NAME = select_best_model()
 
-# --- 3. ОБРАБОТЧИКИ ---
+# --- ЛИЧНОСТЬ: СКЕПТИК ---
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, bot: Bot):
@@ -76,13 +44,11 @@ async def cmd_start(message: Message, bot: Bot):
     bot_info = await bot.get_me()
     await db.add_user(user.id, user.username, user.full_name, bot_info.id)
     
-    # Красивое имя модели для вывода (убираем models/)
-    model_display = CURRENT_MODEL_NAME.replace("models/", "")
-    
+    # ПРИВЕТСТВИЕ СКЕПТИКА
     text = (
-        f"Привет! Это бот {bot_info.first_name}.\n"
-        f"🧠 Мозг: <b>{model_display}</b>\n\n"
-        f"Пиши, я готов."
+        f"🤨 Ну что, пришел за правдой? Я <b>MySkepticBot</b>.\n"
+        f"🧠 Мозги: <b>{CURRENT_MODEL_NAME.replace('models/', '')}</b>\n\n"
+        f"Пиши свою 'гениальную' идею, я разнесу её в пух и прах."
     )
     await message.answer(text)
 
@@ -90,9 +56,19 @@ async def cmd_start(message: Message, bot: Bot):
 async def handle_message(message: Message):
     try:
         model = genai.GenerativeModel(CURRENT_MODEL_NAME)
-        # ВАЖНО: Для Скептика тут нужно добавить system_prompt перед message.text
-        # Для Прозрения — просто message.text
-        response = model.generate_content(message.text) 
+        
+        # ВОТ ГДЕ РОЖДАЕТСЯ ХАРАКТЕР
+        system_prompt = (
+            "Ты — циничный критик и скептик. "
+            "Твоя цель — найти слабые места в идее пользователя. "
+            "Используй сарказм, сленг, будь жестким, но аргументированным. "
+            "Отвечай коротко. Вводные данные: "
+        )
+        
+        # Склеиваем роль + сообщение пользователя
+        full_text = system_prompt + message.text
+        
+        response = model.generate_content(full_text)
         await message.answer(response.text)
     except Exception as e:
-        await message.answer(f"⚠️ Ошибка модели: {e}")
+        await message.answer(f"⚠️ Ошибка: {e}")
