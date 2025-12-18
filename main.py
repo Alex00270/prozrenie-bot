@@ -1,73 +1,47 @@
 import asyncio
 import logging
-import os
 import sys
-from aiohttp import web, ClientSession # <--- Добавили ClientSession
+import os
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from database import db
+# Импорты ваших ботов
 from bots.prozrenie.handlers import router as prozrenie_router
-from bots.angry_bot.handlers import router as angry_router 
-logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+from bots.angry_bot.handlers import router as angry_router
+# --- ДОБАВИЛИ ИМПОРТ КАССИРА ---
+from bots.staff_bot.handlers import router as staff_router
 
-# --- ФУНКЦИЯ БЕССМЕРТИЯ (SELF-PING) ---
-async def keep_alive_loop():
-    """Пингует сам себя каждые 10 минут, чтобы Render не уснул"""
-    # Render автоматически создает эту переменную с адресом вашего сайта
-    app_url = os.getenv("RENDER_EXTERNAL_URL") 
-    
-    if not app_url:
-        print("DEBUG KEEP-ALIVE. No external URL found. Skipping self-ping.", flush=True)
-        return
+# ... (тут настройка логирования и загрузка переменных) ...
 
-    print(f"DEBUG KEEP-ALIVE. Starting self-ping to {app_url}", flush=True)
-    async with ClientSession() as session:
-        while True:
-            try:
-                # Ждем 10 минут (600 секунд), так как лимит Render — 15 минут
-                await asyncio.sleep(600) 
-                async with session.get(app_url) as response:
-                    print(f"DEBUG KEEP-ALIVE. Ping sent. Status: {response.status}", flush=True)
-            except Exception as e:
-                print(f"DEBUG KEEP-ALIVE. Error: {e}", flush=True)
-
-# --- MAIN ---
 async def main():
-    await db.connect()
+    # ... (инициализация ботов) ...
+    
+    # БОТ 1: ПРОЗРЕНИЕ
+    bot_prozrenie = Bot(token=os.getenv("TOKEN"), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    dp_prozrenie = Dispatcher()
+    dp_prozrenie.include_router(prozrenie_router)
+    
+    # --- ПОДКЛЮЧАЕМ КАССИРА СЮДА ---
+    dp_prozrenie.include_router(staff_router) 
+    # Теперь Прозрение умеет и стратегии строить, и кассу принимать по команде /report
 
-    # Конфигурация ботов
-    bots_config = [
-        ("TOKEN", prozrenie_router),
-        ("BOT_TOKEN_2", angry_router) 
-    ]
+    # БОТ 2: ЗЛОЙ СКЕПТИК
+    bot_skeptic = Bot(token=os.getenv("TOKEN_2"), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    dp_skeptic = Dispatcher()
+    dp_skeptic.include_router(angry_router)
 
-    apps = [] 
+    await bot_prozrenie.delete_webhook(drop_pending_updates=True)
+    await bot_skeptic.delete_webhook(drop_pending_updates=True)
 
-    # 1. Задачи ботов
-    for token_env_name, router in bots_config:
-        token = os.getenv(token_env_name)
-        if not token: continue
-
-        bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-        dp = Dispatcher()
-        dp.include_router(router)
-        apps.append(dp.start_polling(bot))
-
-    # 2. Веб-сервер
-    app = web.Application()
-    app.router.add_get('/', lambda r: web.Response(text="Alive"))
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
-    await site.start()
-
-    # 3. ДОБАВЛЯЕМ SELF-PING В ЗАДАЧИ
-    apps.append(keep_alive_loop())
-
-    # Запуск всего
-    await asyncio.gather(*apps)
+    # Запускаем обоих
+    await asyncio.gather(
+        dp_prozrenie.start_polling(bot_prozrenie),
+        dp_skeptic.start_polling(bot_skeptic)
+    )
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
