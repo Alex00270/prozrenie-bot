@@ -1,4 +1,5 @@
 import os
+import re
 import google.generativeai as genai
 from aiogram import Router, Bot
 from aiogram.types import Message
@@ -15,23 +16,36 @@ if GEMINI_API_KEY:
 # --- УМНЫЙ ПОИСК МОДЕЛИ (Точно такой же, как у первого бота) ---
 def select_best_model():
     try:
-        # 1. Получаем список всех моделей
         all_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         
-        # 2. Ищем Gemma (сортируем, чтобы взять самую свежую, например Gemma 3)
-        gemma = [m for m in all_models if "gemma" in m.lower() and "it" in m.lower()]
-        if gemma:
-            gemma.sort(key=lambda x: x, reverse=True) 
-            return gemma[0] # <-- Вот тут он сам возьмет gemma-3-27b-it
+        # 1. Ищем модели семейства Gemma
+        gemma_candidates = [m for m in all_models if "gemma" in m.lower() and "it" in m.lower()]
+        
+        if gemma_candidates:
+            # Функция для извлечения "мощности" (числа перед 'b', например 27 из '27b')
+            def get_model_power(name):
+                # Ищем конструкцию типа "9b", "27b"
+                match = re.search(r'(\d+)b', name.lower())
+                if match:
+                    return int(match.group(1))
+                return 0 # Если размер не указан, считаем слабой
             
-        # 3. Если Gemma нет, ищем любую Gemini
+            # Сортируем: сначала по мощности (27 > 9), потом по новизне (reverse=True)
+            gemma_candidates.sort(key=lambda x: (get_model_power(x), x), reverse=True)
+            
+            return gemma_candidates[0] # Вернет самую мощную (например, gemma-2-27b-it)
+
+        # 2. Если Gemma нет, ищем Gemini (Pro лучше Flash)
         gemini = [m for m in all_models if "gemini" in m.lower()]
         if gemini:
+            # Тут простая эвристика: Pro > Flash
+            gemini.sort(key=lambda x: 1 if "pro" in x.lower() else 0, reverse=True)
             return gemini[0]
             
     except Exception as e:
-        print(f"DEBUG SKEPTIC. Model select error: {e}", flush=True)
+        print(f"DEBUG MODEL SELECTOR. Error: {e}", flush=True)
     
+    # Запасной вариант
     return "gemini-1.5-flash"
 
 # Запускаем выбор
