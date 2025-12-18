@@ -6,10 +6,18 @@ import sys
 class Database:
     def __init__(self):
         self.pool = None
-        self.db_url = os.getenv("DATABASE_URL")
+        raw_url = os.getenv("DATABASE_URL")
+        
+        # --- HOTFIX ДЛЯ RENDER/SQLALCHEMY ---
+        # Библиотека asyncpg не понимает "postgresql+asyncpg://", ей нужно чистое "postgresql://"
+        if raw_url and raw_url.startswith("postgresql+asyncpg://"):
+            self.db_url = raw_url.replace("postgresql+asyncpg://", "postgresql://")
+        else:
+            self.db_url = raw_url
         
     async def connect(self):
         if not self.pool:
+            print(f"DEBUG DB. Connecting to {self.db_url.split('@')[1] if self.db_url else 'None'}...", flush=True)
             try:
                 self.pool = await asyncpg.create_pool(self.db_url)
                 print("DEBUG DB. Connection pool created", flush=True)
