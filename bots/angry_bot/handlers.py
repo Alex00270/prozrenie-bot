@@ -57,18 +57,24 @@ async def handle_message(message: Message):
     try:
         model = genai.GenerativeModel(CURRENT_MODEL_NAME)
         
-        # ВОТ ГДЕ РОЖДАЕТСЯ ХАРАКТЕР
-        system_prompt = (
-            "Ты — циничный критик и скептик. "
-            "Твоя цель — найти слабые места в идее пользователя. "
-            "Используй сарказм, сленг, будь жестким, но аргументированным. "
-            "Отвечай коротко. Вводные данные: "
-        )
-        
-        # Склеиваем роль + сообщение пользователя
+        # --- (Для Скептика оставьте system_prompt, для Прозрения уберите) ---
+        # Пример для Скептика:
+        system_prompt = "Ты — циничный скептик. Отвечай жестко. " 
         full_text = system_prompt + message.text
+        # ------------------------------------------------------------------
         
-        response = model.generate_content(full_text)
-        await message.answer(response.text)
+        # Генерируем ответ
+        response = model.generate_content(full_text) # Или просто message.text для Стратега
+        answer_text = response.text
+        
+        # --- ЛЕКАРСТВО ОТ ОШИБКИ "Message too long" ---
+        if len(answer_text) > 4000:
+            # Если текст огромный, режем его на куски
+            for x in range(0, len(answer_text), 4000):
+                await message.answer(answer_text[x:x+4000])
+        else:
+            # Если влезает, отправляем как обычно
+            await message.answer(answer_text)
+            
     except Exception as e:
         await message.answer(f"⚠️ Ошибка: {e}")
