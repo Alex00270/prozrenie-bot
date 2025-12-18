@@ -9,8 +9,7 @@ from aiogram.enums import ParseMode
 
 from database import db
 from bots.prozrenie.handlers import router as prozrenie_router
-# from bots.angry_bot.handlers import router as angry_router # Раскомментируйте, когда создадите второго
-
+from bots.angry_bot.handlers import router as angry_router 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 # --- ФУНКЦИЯ БЕССМЕРТИЯ (SELF-PING) ---
@@ -41,7 +40,7 @@ async def main():
     # Конфигурация ботов
     bots_config = [
         ("TOKEN", prozrenie_router),
-        # ("BOT_TOKEN_2", angry_router) 
+        ("BOT_TOKEN_2", angry_router) 
     ]
 
     apps = [] 
