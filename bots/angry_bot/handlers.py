@@ -7,36 +7,34 @@ from database import db
 
 router = Router()
 
-# 1. Настройка API
+# Настройка API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# 2. Умный выбор модели (Взяли у первого бота)
+# --- УМНЫЙ ПОИСК МОДЕЛИ (Точно такой же, как у первого бота) ---
 def select_best_model():
     try:
-        # Получаем список всех доступных моделей
+        # 1. Получаем список всех моделей
         all_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         
-        # Ищем модели семейства gemma или gemini
-        # Приоритет: Gemini 1.5 Flash -> Gemini Pro -> Любая другая
-        for m in all_models:
-            if "gemini-1.5-flash" in m:
-                return m
-            if "gemini-pro" in m:
-                return m
-                
-        # Если ничего не нашли, берем первую попавшуюся
-        if all_models:
-            return all_models[0]
+        # 2. Ищем Gemma (сортируем, чтобы взять самую свежую, например Gemma 3)
+        gemma = [m for m in all_models if "gemma" in m.lower() and "it" in m.lower()]
+        if gemma:
+            gemma.sort(key=lambda x: x, reverse=True) 
+            return gemma[0] # <-- Вот тут он сам возьмет gemma-3-27b-it
+            
+        # 3. Если Gemma нет, ищем любую Gemini
+        gemini = [m for m in all_models if "gemini" in m.lower()]
+        if gemini:
+            return gemini[0]
             
     except Exception as e:
         print(f"DEBUG SKEPTIC. Model select error: {e}", flush=True)
     
-    # Совсем запасной вариант (без приставки models/)
     return "gemini-1.5-flash"
 
-# Определяем модель при запуске
+# Запускаем выбор
 CURRENT_MODEL_NAME = select_best_model()
 print(f"DEBUG SKEPTIC. Selected model: {CURRENT_MODEL_NAME}", flush=True)
 
@@ -53,13 +51,13 @@ async def cmd_start(message: Message, bot: Bot):
 @router.message()
 async def handle_message(message: Message):
     try:
-        # Используем динамически выбранную модель
         model = genai.GenerativeModel(CURRENT_MODEL_NAME)
         
+        # ХАРАКТЕР БОТА
         system_prompt = (
             "Ты — 'Злой Скептик'. Твоя задача — находить изъяны, логические ошибки и наивность "
-            "в любых сообщениях пользователя. Будь саркастичным, используй черный юмор. "
-            "Не хами открыто, но будь язвительным интеллектуалом. "
+            "в любых сообщениях пользователя. Будь саркастичным, используй черный юмор, мат и сленг (умеренно). "
+            "Твоя цель — спустить пользователя с небес на землю. "
             "Отвечай коротко (2-3 предложения). Сообщение для разбора: "
         )
         
@@ -67,5 +65,4 @@ async def handle_message(message: Message):
         await message.answer(response.text)
     except Exception as e:
         print(f"DEBUG SKEPTIC. Error: {e}", flush=True)
-        # Если ошибка, пробуем ответить заглушкой, но информативной
-        await message.answer(f"Что-то пошло не так. Моя нейросеть подавилась ошибкой: {e}")
+        await message.answer(f"⚠️ Ошибка нейросети: {e}")
