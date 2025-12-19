@@ -8,3 +8,4 @@ asyncpg>=0.29.0
 asyncpg
 gspread
 oauth2client
+aiohttp
