@@ -1,5 +1,5 @@
 import os
-import json  # <--- ДОБАВИЛИ ЭТОТ ИМПОРТ
+import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from aiogram import Router, F, Bot
@@ -12,48 +12,49 @@ from datetime import datetime
 router = Router()
 
 # --- 1. НАСТРОЙКИ ---
+# Ваш ID таблицы из ссылки
+SPREADSHEET_ID = '11jjRhELvWcrFV9TKHDV47cvDAkmR5hMDoLTn8C4G_kA' 
 
 if os.path.exists('/etc/secrets/credentials.json'):
     JSON_KEYFILE = '/etc/secrets/credentials.json'
 else:
     JSON_KEYFILE = 'credentials.json'
 
-SPREADSHEET_NAME = 'Шлюз выручки' 
-
-OBJECTS = ["🎟 Билеты", "☕️ Кафе Шлюз", "🍔 Кафе 2", "🍕 Кафе 3"]
-STAFF_NAMES = ["Бабаев", "Смирнов", "Гоголев"]
-
-PRICE_ADULT = 160
-PRICE_DISCOUNT = 100
-
-# --- 2. РАБОТА С ТАБЛИЦЕЙ (ИСПРАВЛЕННАЯ ВЕРСИЯ) ---
+# --- 2. РАБОТА С ТАБЛИЦЕЙ ---
 def add_to_sheet(row_data):
     try:
+        print(f"DEBUG: Начинаю попытку записи в таблицу {SPREADSHEET_ID}", flush=True)
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        # --- ЛЕЧЕНИЕ КЛЮЧА ---
-        # 1. Читаем файл как обычный текст/словарь
+        if not os.path.exists(JSON_KEYFILE):
+            print(f"DEBUG ERROR: Файл {JSON_KEYFILE} не найден!", flush=True)
+            return False
+
         with open(JSON_KEYFILE, 'r') as f:
             creds_dict = json.load(f)
         
-        # 2. Принудительно чиним переносы строк в приватном ключе
-        # Если там написано "\n" буквами, меняем на настоящий Enter
+        # Лечение ключа (удаляем лишние экранирования и пробелы)
         if 'private_key' in creds_dict:
-            creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
+            fixed_key = creds_dict['private_key'].replace('\\n', '\n').strip()
+            creds_dict['private_key'] = fixed_key
+            print("DEBUG: Приватный ключ успешно обработан", flush=True)
 
-        # 3. Авторизуемся через исправленный словарь
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         
-        # Открываем первую вкладку
-        sheet = client.open(SPREADSHEET_NAME).sheet1
+        # Открываем по ID
+        spreadsheet = client.open_by_key(SPREADSHEET_ID)
+        # Используем индекс 0, чтобы всегда писать в самую первую вкладку слева
+        sheet = spreadsheet.get_worksheet(0) 
         
         sheet.append_row(row_data)
+        print(f"DEBUG: Данные успешно добавлены в '{spreadsheet.title}'", flush=True)
         return True
     except Exception as e:
-        print(f"GOOGLE SHEET ERROR: {e}")
+        # Это выведет подробную ошибку в логи Render
+        print(f"🚨 GOOGLE SHEET CRITICAL ERROR: {type(e).__name__}: {e}", flush=True)
         return False
-
+        
 # --- 3. СЦЕНАРИЙ ДИАЛОГА (Остальное без изменений) ---
 class Report(StatesGroup):
     choosing_object = State()
