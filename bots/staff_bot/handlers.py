@@ -18,7 +18,7 @@ if os.path.exists('/etc/secrets/credentials.json'):
 else:
     JSON_KEYFILE = 'credentials.json'
 
-SPREADSHEET_NAME = 'Кассовая книга Декабрь 2025' 
+SPREADSHEET_NAME = 'Шлюз выручки' 
 
 OBJECTS = ["🎟 Билеты", "☕️ Кафе Шлюз", "🍔 Кафе 2", "🍕 Кафе 3"]
 STAFF_NAMES = ["Бабаев", "Смирнов", "Гоголев"]
