@@ -6,3 +6,5 @@ aiohttp>=3.9.0
 sqlalchemy>=2.0.0
 asyncpg>=0.29.0
 asyncpg
+gspread
+oauth2client
