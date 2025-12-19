@@ -6,35 +6,43 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-# Импорты ваших ботов
+# Импорты ботов
 from bots.prozrenie.handlers import router as prozrenie_router
 from bots.angry_bot.handlers import router as angry_router
-# --- ДОБАВИЛИ ИМПОРТ КАССИРА ---
 from bots.staff_bot.handlers import router as staff_router
 
-# ... (тут настройка логирования и загрузка переменных) ...
+# Логирование
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 async def main():
-    # ... (инициализация ботов) ...
+    # 1. Читаем токены (ТЕПЕРЬ ПРАВИЛЬНО: BOT_TOKEN_2)
+    token1 = os.getenv("TOKEN")
+    token2 = os.getenv("BOT_TOKEN_2") # <--- Исправил, теперь совпадает с Render
     
-    # БОТ 1: ПРОЗРЕНИЕ
-    bot_prozrenie = Bot(token=os.getenv("TOKEN"), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp_prozrenie = Dispatcher()
-    dp_prozrenie.include_router(prozrenie_router)
-    
-    # --- ПОДКЛЮЧАЕМ КАССИРА СЮДА ---
-    dp_prozrenie.include_router(staff_router) 
-    # Теперь Прозрение умеет и стратегии строить, и кассу принимать по команде /report
+    if not token1 or not token2:
+        print(f"CRITICAL ERROR: Tokens missing. Got token1={bool(token1)}, token2={bool(token2)}", flush=True)
+        return
 
-    # БОТ 2: ЗЛОЙ СКЕПТИК
-    bot_skeptic = Bot(token=os.getenv("TOKEN_2"), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    # --- БОТ 1: ПРОЗРЕНИЕ (СТРАТЕГ + КАССИР) ---
+    bot_prozrenie = Bot(token=token1, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    dp_prozrenie = Dispatcher()
+    
+    # ПОРЯДОК ВАЖЕН: Сначала Кассир (ловит /report)
+    dp_prozrenie.include_router(staff_router)
+    # Потом Стратег (ловит всё остальное)
+    dp_prozrenie.include_router(prozrenie_router)
+
+    # --- БОТ 2: СКЕПТИК ---
+    bot_skeptic = Bot(token=token2, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp_skeptic = Dispatcher()
     dp_skeptic.include_router(angry_router)
 
+    # Чистка и запуск
     await bot_prozrenie.delete_webhook(drop_pending_updates=True)
     await bot_skeptic.delete_webhook(drop_pending_updates=True)
 
-    # Запускаем обоих
+    print("✅ БОТЫ ЗАПУЩЕНЫ УСПЕШНО", flush=True)
+
     await asyncio.gather(
         dp_prozrenie.start_polling(bot_prozrenie),
         dp_skeptic.start_polling(bot_skeptic)
