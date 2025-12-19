@@ -12,7 +12,12 @@ router = Router()
 
 # --- ВАЖНЫЕ НАСТРОЙКИ ---
 # 1. Файл ключа должен лежать рядом с main.py
-JSON_KEYFILE = 'credentials.json' 
+# --- УМНЫЙ ПОИСК КЛЮЧА ---
+# Сначала ищем в секретах Render, потом в корне проекта
+if os.path.exists('/etc/secrets/credentials.json'):
+    JSON_KEYFILE = '/etc/secrets/credentials.json'
+else:
+    JSON_KEYFILE = 'credentials.json'
 
 # 2. Имя таблицы (ТОЧНО как в Google, слева сверху)
 # Если вы не меняли, она может называться "Новая таблица" или как вы написали.
