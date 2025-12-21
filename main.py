@@ -28,10 +28,11 @@ async def main():
 
     bots.append(bot)
 
-    SimpleRequestHandler(
-        dispatcher=dp,
-        bot=bots,
-    ).register(app, path="/webhook")
+    for bot in bots:
+        SimpleRequestHandler(
+            dispatcher=dp,
+            bot=bot,
+        ).register(app, path="/webhook")
 
     setup_application(app, dp)
 
