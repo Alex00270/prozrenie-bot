@@ -31,12 +31,11 @@ class Database:
                 print(f"DEBUG DB. MongoDB ERROR: {e}", flush=True)
 
     async def add_task(self, task_data: dict):
-        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: проверяем через 'is None'
+        # В MongoDB нельзя использовать 'if not db', только явное сравнение с None
         if self.mongo_db is None: 
             await self.connect()
         
         try:
-            # Если после коннекта всё еще None — значит ошибка в URI
             if self.mongo_db is not None:
                 result = await self.mongo_db.tasks.insert_one(task_data)
                 return result.inserted_id
