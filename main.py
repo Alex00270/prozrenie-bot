@@ -1,82 +1,48 @@
 import asyncio
-import logging
 import os
-import importlib
-
 from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
-logging.basicConfig(level=logging.INFO)
-
-WEBHOOK_PATH = "/webhook"
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "change-me")
-PORT = int(os.getenv("PORT", 10000))
-BASE_URL = os.getenv("RENDER_EXTERNAL_URL")
-
+PORT = int(os.environ.get("PORT", 10000))
 
 async def main():
-    if not BASE_URL:
-        raise RuntimeError("RENDER_EXTERNAL_URL is not set")
-
     app = web.Application()
 
-    bots_dir = "bots"
-    print("🔍 Ищу ботов...", flush=True)
+    bots = []   # список (bot, dispatcher)
 
-    for bot_name in os.listdir(bots_dir):
-        bot_path = os.path.join(bots_dir, bot_name)
-        if not os.path.isdir(bot_path) or bot_name.startswith("_"):
-            continue
+    # --- тут твоя логика поиска ботов ---
+    # пример:
+    # bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    # dp = Dispatcher()
+    # dp.include_router(router)
+    # bots.append((bot, dp))
 
-        token_env = f"TOKEN_{bot_name.upper()}"
-        token = os.getenv(token_env)
+    for bot, dp in bots:
+        SimpleRequestHandler(
+            dispatcher=dp,
+            bot=bot,
+        ).register(app, path=f"/webhook/{bot.token}")
 
-        if not token:
-            print(f"⚠️ Пропуск {bot_name}: нет {token_env}", flush=True)
-            continue
+        await bot.set_webhook(
+            url=f"https://prozrenie-bot.onrender.com/webhook/{bot.token}"
+        )
 
-        try:
-            module = importlib.import_module(f"bots.{bot_name}.handlers")
+    setup_application(app, [dp for _, dp in bots])
 
-            bot = Bot(
-                token=token,
-                default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-            )
+    runner = web.AppRunner(app)
+    await runner.setup()
 
-            dp = Dispatcher()
-            dp.include_router(module.router)
-
-            webhook_url = f"{BASE_URL}{WEBHOOK_PATH}/{bot.token}"
-
-            # ❗ ВАЖНО: сначала чистим старые webhook / polling
-            await bot.delete_webhook(drop_pending_updates=True)
-
-            await bot.set_webhook(
-                webhook_url,
-                secret_token=WEBHOOK_SECRET,
-            )
-
-            SimpleRequestHandler(
-                dispatcher=dp,
-                bot=bot,
-                secret_token=WEBHOOK_SECRET,
-            ).register(
-                app,
-                path=f"{WEBHOOK_PATH}/{bot.token}"
-            )
-
-            print(f"✅ Бот [{bot_name}] подключён к webhook", flush=True)
-
-        except Exception as e:
-            print(f"❌ Ошибка запуска {bot_name}: {e}", flush=True)
+    site = web.TCPSite(runner, host="0.0.0.0", port=PORT)
+    await site.start()
 
     print(f"🚀 Webhook сервер запущен на порту {PORT}", flush=True)
-    web.run_app(app, host="0.0.0.0", port=PORT)
+
+    # ⛔️ ВАЖНО: держим процесс живым
+    await asyncio.Event().wait()
 
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(main())
