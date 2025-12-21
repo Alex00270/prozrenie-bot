@@ -74,7 +74,7 @@ async def main():
         await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop() #
+    loop = asyncio.new_event_loop()
     
     # Функция для чистого выхода
     def stop_all():
