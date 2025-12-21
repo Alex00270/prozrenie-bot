@@ -2,58 +2,65 @@ import asyncio
 import logging
 import sys
 import os
+import importlib
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-# Импорты роутеров
-from bots.prozrenie.handlers import router as prozrenie_router
-from bots.angry_bot.handlers import router as angry_router
-from bots.staff_bot.handlers import router as staff_router
-from bots.ai_team.handlers import router as ai_team_router 
-
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 async def main():
-    # 1. Читаем переменные (Строго по скриншоту Render)
-    token_prozrenie = os.getenv("TOKEN")
-    token_staff     = os.getenv("TOKEN_STAFF")
-    token_skeptic   = os.getenv("BOT_TOKEN_2") # Исправлено под реальность
-    token_ai_team   = os.getenv("TOKEN_AI_TEAM")
+    # 1. Сканируем папку bots/
+    bots_dir = "bots"
+    if not os.path.exists(bots_dir):
+        print(f"❌ CRITICAL: Папка {bots_dir} не найдена!", flush=True)
+        return
 
-    # 2. Конфиг запуска
-    bots_config = [
-        {"name": "Prozrenie", "token": token_prozrenie, "router": prozrenie_router},
-        {"name": "StaffBot",  "token": token_staff,     "router": staff_router},
-        {"name": "Skeptic",   "token": token_skeptic,   "router": angry_router},
-        {"name": "AI_Team",   "token": token_ai_team,   "router": ai_team_router},
+    # Получаем список папок-ботов
+    bot_folders = [
+        f for f in os.listdir(bots_dir) 
+        if os.path.isdir(os.path.join(bots_dir, f)) and not f.startswith("__")
     ]
 
     tasks = []
-    print("DEBUG: Инициализация системы...", flush=True)
+    print(f"DEBUG: Найдено модулей: {len(bot_folders)} {bot_folders}", flush=True)
 
-    # 3. Старт
-    for bot_conf in bots_config:
-        if bot_conf["token"]:
-            try:
-                bot = Bot(token=bot_conf["token"], default=DefaultBotProperties(parse_mode=ParseMode.Markdown))
+    # 2. Универсальный запуск
+    for bot_name in bot_folders:
+        try:
+            # А. Динамический импорт роутера
+            # Python сам находит bots/angry_bot/handlers.py
+            module = importlib.import_module(f"bots.{bot_name}.handlers")
+            
+            if not hasattr(module, "router"):
+                print(f"⚠️ Пропуск [{bot_name}]: в handlers.py нет 'router'", flush=True)
+                continue
+
+            # Б. Авто-поиск токена
+            # Если папка 'angry_bot', ищем переменную 'TOKEN_ANGRY_BOT'
+            env_var = f"TOKEN_{bot_name.upper()}"
+            token = os.getenv(env_var)
+
+            if token:
+                # В. Старт (HTML режим для надежности)
+                bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
                 dp = Dispatcher()
-                dp.include_router(bot_conf["router"])
+                dp.include_router(module.router)
                 
                 await bot.delete_webhook(drop_pending_updates=True)
                 tasks.append(dp.start_polling(bot))
-                print(f"✅ [{bot_conf['name']}] добавлен в очередь.", flush=True)
-            except Exception as e:
-                print(f"❌ Ошибка старта [{bot_conf['name']}]: {e}", flush=True)
-        else:
-            # Не паникуем, если какого-то токена нет, просто предупреждаем
-            print(f"⚠️ Пропуск [{bot_conf['name']}]: Токен не найден.", flush=True)
+                print(f"✅ Бот [{bot_name}] ЗАГРУЖЕН (Токен: {env_var})", flush=True)
+            else:
+                print(f"⚠️ ОШИБКА КОНФИГУРАЦИИ: Для папки '{bot_name}' не найдена переменная '{env_var}'", flush=True)
+
+        except Exception as e:
+            print(f"❌ Сбой загрузки [{bot_name}]: {e}", flush=True)
 
     if not tasks:
-        print("❌ CRITICAL: Ни один бот не запущен!", flush=True)
+        print("❌ FATAL: Нет активных ботов. Проверьте имена переменных в Render!", flush=True)
         return
 
-    print(f"🚀 ЗАПУСК {len(tasks)} БОТОВ.", flush=True)
+    print(f"🚀 СИСТЕМА В ЭФИРЕ: {len(tasks)} юнитов работают.", flush=True)
     await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
