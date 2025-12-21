@@ -12,14 +12,12 @@ BASE_URL = os.environ.get(
     f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}"
 )
 
-
 async def main():
     app = web.Application()
     dp = Dispatcher()
 
     bots = []
 
-    # пример
     bot = Bot(
         token=os.environ["TOKEN_NEZABUDKA"],
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
@@ -30,7 +28,6 @@ async def main():
 
     bots.append(bot)
 
-    # webhook handler
     SimpleRequestHandler(
         dispatcher=dp,
         bot=bots,
@@ -38,15 +35,15 @@ async def main():
 
     setup_application(app, dp)
 
-   for bot in bots:
-    await bot.delete_webhook(drop_pending_updates=True)
-    await bot.set_webhook(f"{BASE_URL}/webhook")
-
-
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
+
+    # ⬅️ ТОЛЬКО ПОСЛЕ СТАРТА СЕРВЕРА
+    for bot in bots:
+        await bot.delete_webhook(drop_pending_updates=True)
+        await bot.set_webhook(f"{BASE_URL}/webhook")
 
     print("🚀 Webhook сервер запущен", flush=True)
     await asyncio.Event().wait()
