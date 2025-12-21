@@ -1,109 +1,94 @@
 import os
-import logging
 from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.filters import CommandStart
-from aiogram.enums import ParseMode
-from .agents import call_agent
+# Импортируем наш Универсальный Движок
+from utils.ai_engine import ask_brain, safe_reply
 
 router = Router()
 
-# --- ФУНКЦИЯ БЕЗОПАСНОЙ ОТПРАВКИ ---
-async def safe_send(message: Message, header: str, content: str, model_name: str):
+# --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ АГЕНТОВ ---
+async def run_agent(role: str, prompt: str):
     """
-    Пытается отправить сообщение с Markdown.
-    Если падает ошибка (битые символы), отправляет чистый текст.
+    1. Читает профиль агента (PM, Analyst и т.д.)
+    2. Отправляет задачу в Центральный Двигатель.
+    3. Возвращает текст и подпись модели.
     """
-    # Собираем красивый текст
-    full_text_md = f"{header}\n\n{content}\n\n⚙️ _Выполнил: {model_name}_"
+    current_dir = os.path.dirname(__file__)
+    profile_path = os.path.join(current_dir, "profiles", f"{role}.txt")
     
+    # Пытаемся прочитать профиль
     try:
-        # Попытка 1: Markdown (Красиво)
-        await message.answer(full_text_md, parse_mode=ParseMode.MARKDOWN)
-    except Exception as e:
-        logging.warning(f"Markdown failed: {e}. Fallback to plain text.")
-        try:
-            # Попытка 2: HTML (Иногда помогает, если Markdown глючит)
-            # Экранируем < и > на всякий случай, если это HTML
-            safe_content = content.replace("<", "&lt;").replace(">", "&gt;")
-            full_text_html = f"{header}\n\n{safe_content}\n\n⚙️ <i>Выполнил: {model_name}</i>"
-            await message.answer(full_text_html, parse_mode=ParseMode.HTML)
-        except Exception as e2:
-            logging.warning(f"HTML failed: {e2}. Fallback to None.")
-            # Попытка 3: Чистый текст (Железобетонно)
-            # Убираем жирность из хедера для чистого текста
-            clean_header = header.replace("*", "")
-            plain_text = f"{clean_header}\n\n{content}\n\n⚙️ Выполнил: {model_name}"
-            await message.answer(plain_text, parse_mode=None)
+        with open(profile_path, "r", encoding="utf-8") as f:
+            system_prompt = f.read()
+    except:
+        system_prompt = "Ты полезный AI-ассистент в составе команды разработки."
+
+    # ЗАПРОС К МОЗГУ (через ai_engine)
+    content, model, source = await ask_brain(system_prompt, prompt)
+    
+    # Формируем красивую подпись для футера
+    model_info = f"{model} | {source}"
+    return content, model_info
+
 
 # --- ХЕНДЛЕРЫ ---
 
 @router.message(CommandStart())
 async def cmd_start(message: Message):
-    target_model = os.getenv("MODEL_NAME", "auto (на усмотрение шлюза)")
+    # Просто показываем намерение
+    target = os.getenv("MODEL_NAME", "auto")
     await message.answer(
         f"👋 **AI Team Lead на связи!**\n"
-        f"🎯 Целевая модель: `{target_model}`\n\n"
-        "Я отправлю твой запрос в Шлюз, а он выберет исполнителя.\n"
-        "Напиши задачу со словом **'ребята'**."
+        f"🎯 Цель: `{target}`\n\n"
+        "Напиши задачу со словом **'ребята'**, и я соберу консилиум."
     )
 
 @router.message(F.text.lower().contains("ребята"))
 async def start_consilium(message: Message):
     user_idea = message.text
     
-    await message.answer(f"🚀 **Задача принята.**\n_{user_idea}_\n\nСозываю консилиум...")
+    # Визуальный старт
+    await message.answer(f"🚀 **Задача принята:**\n_{user_idea}_\n\nСозываю команду...")
 
     try:
-        # --- PM ---
-        await message.answer("1️⃣ **PM** готовит план...")
-        pm_text, pm_model = await call_agent("pm", f"Идея: {user_idea}")
-        
-        # Используем безопасную отправку
-        await safe_send(message, "👷‍♂️ **PM (План):**", pm_text, pm_model)
+        # 1. PM (План v1)
+        await message.answer("1️⃣ **PM** строит архитектуру...")
+        pm_text, pm_info = await run_agent("pm", f"Задача клиента: {user_idea}")
+        await safe_reply(message, "👷‍♂️ **PM (План):**", pm_text, pm_info)
 
-        # --- КРИТИКА ---
-        await message.answer("2️⃣ **Критика...**")
-        
-        analyst_text, an_model = await call_agent("analyst", f"Критикуй: {user_idea}", previous_context=pm_text)
-        await safe_send(message, "🕵️‍♂️ **Аналитик:**", analyst_text, an_model)
-        
-        marketer_text, mk_model = await call_agent("marketer", f"Где деньги?: {user_idea}", previous_context=pm_text)
-        await safe_send(message, "🤑 **Маркетолог:**", marketer_text, mk_model)
+        # 2. Аналитик (Критика)
+        await message.answer("2️⃣ **Аналитик** ищет риски...")
+        an_text, an_info = await run_agent("analyst", f"Задача: {user_idea}\n\nПлан PM: {pm_text}\n\nКритикуй жестко.")
+        await safe_reply(message, "🕵️‍♂️ **Аналитик:**", an_text, an_info)
 
-        # --- ДОРАБОТКА ---
-        await message.answer("3️⃣ **PM исправляет ошибки...**")
-        
-        pm_v2_text, pm_v2_model = await call_agent("pm", 
-            "Исправь план с учетом критики.",
-            previous_context=f"План: {pm_text}\nКритика: {analyst_text}\nДеньги: {marketer_text}"
+        # 3. Маркетолог (Деньги)
+        mark_text, mark_info = await run_agent("marketer", f"Задача: {user_idea}\n\nПлан PM: {pm_text}\n\nКак на этом заработать?")
+        await safe_reply(message, "🤑 **Маркетолог:**", mark_text, mark_info)
+
+        # 4. PM (План v2 - Финал)
+        await message.answer("3️⃣ **PM** исправляет ошибки...")
+        fin_text, fin_info = await run_agent("pm", 
+            f"Перепиши план с учетом критики.\nСтарый план: {pm_text}\nКритика Аналитика: {an_text}\nИдеи Маркетолога: {mark_text}"
         )
-        await safe_send(message, "👷‍♂️ **PM (Финал v2.0):**", pm_v2_text, pm_v2_model)
-
-        # --- ИТОГ ---
-        await message.answer("✍️ **Итог...**")
-        final_text, ed_model = await call_agent("editor", 
-            "Собери отчет.",
-            previous_context=f"Финал: {pm_v2_text}"
-        )
-        await safe_send(message, "📑 **ОТЧЕТ:**", final_text, ed_model)
+        await safe_reply(message, "🏁 **Итог (v2.0):**", fin_text, fin_info)
+        
+        # 5. Редактор (Отчет)
+        await message.answer("✍️ **Редактор** формирует документ...")
+        report, report_info = await run_agent("editor", f"Собери итоговое саммари:\n{fin_text}")
+        await safe_reply(message, "📑 **ОТЧЕТ:**", report, report_info)
 
     except Exception as e:
-        await message.answer(f"❌ Критическая ошибка процесса: {str(e)}")
+        await message.answer(f"❌ Сбой консилиума: {e}")
 
-# --- БОЛТАЛКА (Тест модели) ---
+# --- БОЛТАЛКА (Для тестов без слова 'ребята') ---
 @router.message() 
 async def handle_any_other_text(message: Message):
-    """Отвечает на любые сообщения без 'ребята'"""
-    user_text = message.text
     status = await message.answer("🤔 ...")
-
     try:
-        content, model_name = await call_agent("pm", user_text)
-        # Тоже через безопасную функцию, но чуть иначе т.к. message уже отправлен
-        # Проще отправить новое сообщение, а статус удалить, или просто safe_send
+        # Используем роль PM как собеседника по умолчанию
+        text, info = await run_agent("pm", message.text)
         await status.delete()
-        await safe_send(message, "🗣 **Ответ:**", content, model_name)
-        
+        await safe_reply(message, "🗣 **Ответ:**", text, info)
     except Exception as e:
         await status.edit_text(f"❌ Ошибка: {e}")
