@@ -1,5 +1,4 @@
 import os
-import re
 import logging
 import httpx
 import google.generativeai as genai
@@ -13,28 +12,27 @@ from database import db
 
 router = Router()
 
-# --- 1. НАСТРОЙКА РЕЗЕРВА (DIRECT GOOGLE) ---
+# --- 1. РЕЗЕРВ (Google Direct) ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# --- 2. ФУНКЦИЯ: ЕДИНАЯ ТОЧКА ГЕНЕРАЦИИ (ГИБРИД) ---
-async def generate_smart_response(system_prompt, user_data_text):
+# --- 2. ФУНКЦИЯ: УМНЫЙ ЗАПРОС + БЕЗОПАСНАЯ ОТПРАВКА ---
+async def generate_and_send(message: Message, prompt: str, user_data: str):
     """
-    Пытается получить ответ от Шлюза (Приоритет).
-    Если не вышло — падает в Direct Google API (Резерв).
-    Возвращает: (текст_ответа, имя_модели, источник)
+    1. Идет в Шлюз (Dallas).
+    2. Если нет - в Google Direct.
+    3. Отправляет ответ БЕЗОПАСНО (без ошибок разметки).
     """
-    
-    # ----------------------------------------
-    # ПОПЫТКА 1: GATEWAY (Сильные модели)
-    # ----------------------------------------
     gateway_url = os.getenv("GATEWAY_BASE_URL")
     gateway_key = os.getenv("GATEWAY_API_KEY")
-    
-    # Если в Render задана конкретная модель, просим её. Если нет — auto.
     target_model = os.getenv("MODEL_NAME", "auto")
+    
+    content = ""
+    real_model = "Unknown"
+    source = "Unknown"
 
+    # А. Попытка через Шлюз
     if gateway_url and gateway_key:
         try:
             async with httpx.AsyncClient(timeout=90.0) as client:
@@ -42,54 +40,54 @@ async def generate_smart_response(system_prompt, user_data_text):
                     f"{gateway_url}/chat/completions",
                     headers={"Authorization": f"Bearer {gateway_key}"},
                     json={
-                        "model": target_model,
+                        "model": target_model, 
                         "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_data_text}
+                            {"role": "system", "content": prompt},
+                            {"role": "user", "content": user_data}
                         ]
                     }
                 )
-                
                 if resp.status_code == 200:
                     data = resp.json()
                     content = data["choices"][0]["message"]["content"]
                     real_model = data.get("model", target_model)
-                    return content, real_model, "📡 Gateway (Dallas)"
-                else:
-                    logging.warning(f"Gateway Error: {resp.status_code}. Switching to backup.")
+                    source = "📡 Gateway"
         except Exception as e:
-            logging.warning(f"Gateway failed: {e}. Switching to backup.")
+            logging.error(f"Gateway failed: {e}")
 
-    # ----------------------------------------
-    # ПОПЫТКА 2: DIRECT GOOGLE (Резерв)
-    # ----------------------------------------
+    # Б. Резерв (если Шлюз не сработал)
+    if not content:
+        try:
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content(f"{prompt}\n\nDATA:\n{user_data}")
+            content = response.text
+            real_model = "gemini-1.5-flash"
+            source = "🔌 Backup"
+        except Exception as e:
+            content = f"❌ Ошибка генерации: {e}"
+            source = "Dead"
+
+    # В. Безопасная отправка (чтобы не было Bad Request)
+    header = f"⚙️ **Модель:** `{real_model}` | **Канал:** `{source}`"
+    full_text = f"{content}\n\n{header}"
+
     try:
-        # Умный выбор модели из доступных по ключу
-        def select_backup_model():
-            try:
-                models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-                # Простая эвристика: ищем gemini-1.5 или pro
-                priority = [m for m in models if 'gemini-1.5-pro' in m]
-                if priority: return priority[0]
-                return models[0] if models else "models/gemini-pro"
-            except:
-                return "models/gemini-1.5-flash"
-
-        backup_model_name = select_backup_model()
-        model = genai.GenerativeModel(backup_model_name)
-        
-        # Склеиваем промпт вручную, так как либа Google простая
-        full_prompt = f"{system_prompt}\n\nINPUT DATA:\n{user_data_text}"
-        response = model.generate_content(full_prompt)
-        
-        clean_name = backup_model_name.replace("models/", "")
-        return response.text, clean_name, "🔌 Direct API (Backup)"
-
-    except Exception as e:
-        return f"❌ Полный отказ систем. Ошибка: {e}", "None", "Dead"
+        # 1. Пробуем Markdown (красиво)
+        await message.answer(full_text, parse_mode=ParseMode.MARKDOWN)
+    except:
+        try:
+            # 2. Если упало - пробуем HTML (без Markdown символов)
+            # Примитивная замена, чтобы спасти текст
+            safe_content = content.replace("<", "&lt;").replace(">", "&gt;")
+            safe_header = f"⚙️ <b>Модель:</b> {real_model} | <b>Канал:</b> {source}"
+            await message.answer(f"{safe_content}\n\n{safe_header}", parse_mode=ParseMode.HTML)
+        except:
+            # 3. Если и это упало - просто текст (надежно)
+            clean_text = full_text.replace("*", "").replace("`", "")
+            await message.answer(clean_text, parse_mode=None)
 
 
-# --- 3. МАШИНА СОСТОЯНИЙ ---
+# --- 3. FSM (ОПРОСНИК) ---
 class BrandAnalysis(StatesGroup):
     waiting_for_audience = State()
     waiting_for_problem = State()
@@ -98,7 +96,8 @@ class BrandAnalysis(StatesGroup):
     waiting_for_rtb = State()
     waiting_for_explanation = State()
 
-# --- 4. ПРИВЕТСТВИЕ ---
+
+# --- 4. ХЕНДЛЕРЫ ---
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, bot: Bot):
@@ -107,95 +106,70 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
     await db.add_user(user.id, user.username, user.full_name, bot_info.id)
     await state.clear()
     
-    # Показываем, что система гибридная
-    target = os.getenv("MODEL_NAME", "auto")
+    # Читаем намерение из Render (но не хардкодим имя)
+    target = os.getenv("MODEL_NAME", "Auto-Select")
     
-    text = (
-        f"👋 Привет! Я <b>AI-Стратег</b>.\n"
-        f"🎯 Цель: <b>{target}</b> (через Шлюз)\n"
-        f"🛡️ Резерв: <b>Google Direct</b>\n\n"
-        f"Нажми кнопку, чтобы начать анализ."
+    kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🚀 Начать")]], resize_keyboard=True, one_time_keyboard=True)
+    
+    # ВОТ ЗДЕСЬ БЫЛ ХАРДКОД. ТЕПЕРЬ ЕГО НЕТ.
+    await message.answer(
+        f"👋 Привет! Я AI-Стратег.\n"
+        f"🎯 Цель: <b>{target}</b>\n"
+        f"Нажми кнопку, чтобы начать.", 
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
     )
-    
-    kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="🚀 Начать")]],
-        resize_keyboard=True, 
-        one_time_keyboard=True
-    )
-    
-    await message.answer(text, reply_markup=kb)
-
-# --- 5. ЛОГИКА ОПРОСА (Без изменений) ---
 
 @router.message(F.text == "🚀 Начать")
 async def start_survey(message: Message, state: FSMContext):
-    await message.answer("<b>1. Аудитория:</b> Кто твой клиент? (Психотип/Ситуация)", reply_markup=ReplyKeyboardRemove())
+    await message.answer("1. Аудитория?", reply_markup=ReplyKeyboardRemove())
     await state.set_state(BrandAnalysis.waiting_for_audience)
 
 @router.message(BrandAnalysis.waiting_for_audience)
 async def step_problem(message: Message, state: FSMContext):
     await state.update_data(audience=message.text)
-    await message.answer("<b>2. Проблема:</b> Что у них болит перед покупкой?")
+    await message.answer("2. Проблема?")
     await state.set_state(BrandAnalysis.waiting_for_problem)
 
 @router.message(BrandAnalysis.waiting_for_problem)
 async def step_current_pos(message: Message, state: FSMContext):
     await state.update_data(problem=message.text)
-    await message.answer("<b>3. Описание:</b> Твой текущий оффер/шапка профиля.")
+    await message.answer("3. Оффер?")
     await state.set_state(BrandAnalysis.waiting_for_current_pos)
 
 @router.message(BrandAnalysis.waiting_for_current_pos)
 async def step_competitors(message: Message, state: FSMContext):
     await state.update_data(current_positioning=message.text)
-    await message.answer("<b>4. Конкуренты:</b> С кем тебя сравнивают?")
+    await message.answer("4. Конкуренты?")
     await state.set_state(BrandAnalysis.waiting_for_competitors)
 
 @router.message(BrandAnalysis.waiting_for_competitors)
 async def step_rtb(message: Message, state: FSMContext):
     await state.update_data(competitors=message.text)
-    await message.answer("<b>5. RTB:</b> Почему тебе можно верить? (Факты/Кейсы)")
+    await message.answer("5. Почему верить?")
     await state.set_state(BrandAnalysis.waiting_for_rtb)
 
 @router.message(BrandAnalysis.waiting_for_rtb)
 async def step_explanation(message: Message, state: FSMContext):
     await state.update_data(reason_to_believe=message.text)
-    await message.answer("<b>6. Тест:</b> Как клиент объясняет другу, чем ты занимаешься?")
+    await message.answer("6. Как объясняют другу?")
     await state.set_state(BrandAnalysis.waiting_for_explanation)
-
-# --- 6. ФИНАЛ: ВЫЗОВ ГИБРИДНОЙ ФУНКЦИИ ---
 
 @router.message(BrandAnalysis.waiting_for_explanation)
 async def finish_survey(message: Message, state: FSMContext):
     await state.update_data(explanation_test=message.text)
-    user_data = await state.get_data()
+    data = await state.get_data()
     
-    waiting_msg = await message.answer(f"⏳ <b>Анализирую стратегию...</b>\n(Подключаюсь к Шлюзу...)")
+    # Удаляем клавиатуру и показываем статус
+    msg = await message.answer("⏳ Думаю...", reply_markup=ReplyKeyboardRemove())
     
-    input_data = (
-        f"1. Audience: {user_data.get('audience')}\n"
-        f"2. Problem: {user_data.get('problem')}\n"
-        f"3. Current Offer: {user_data.get('current_positioning')}\n"
-        f"4. Competitors: {user_data.get('competitors')}\n"
-        f"5. Trust/RTB: {user_data.get('reason_to_believe')}\n"
-        f"6. Client's words: {user_data.get('explanation_test')}\n"
-    )
-
-    SYSTEM_PROMPT = """
-    You are a senior brand strategist. Identify strategic gaps and propose hypotheses.
-    OUTPUT FORMAT (Russian, Markdown):
-    1. **Диагноз** (Role clarity, Anti-positioning)
-    2. **Тест 10 секунд** (Can it be explained simply?)
-    3. **Гипотезы** (3 distinct strategic angles)
-    4. **Триггер** (Why they need a consultation)
+    prompt = """
+    Ты Стратег. Твоя задача — проанализировать ответы и дать краткий, жесткий разбор.
+    Формат: Диагноз, Тест 10 секунд, 3 Гипотезы.
+    Используй Markdown.
     """
-
-    # --- ВЫЗЫВАЕМ УМНУЮ ГЕНЕРАЦИЮ ---
-    content, model_name, source = await generate_smart_response(SYSTEM_PROMPT, input_data)
     
-    await waiting_msg.delete()
+    # Генерация + Отправка
+    await generate_and_send(msg, prompt, str(data))
     
-    # Красивый футер с технической инфой
-    footer = f"\n\n⚙️ <b>Модель:</b> {model_name}\n🔌 <b>Канал:</b> {source}"
-    
-    await message.answer(content + footer, parse_mode=ParseMode.HTML) # HTML чтобы работали bold теги из промпта если будут
     await state.clear()
