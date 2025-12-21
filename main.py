@@ -7,45 +7,43 @@ from aiogram.enums import ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 PORT = int(os.environ.get("PORT", 10000))
-BASE_URL = os.environ.get("BASE_URL", "https://prozrenie-bot.onrender.com")
+BASE_URL = os.environ["BASE_URL"]
 
 async def main():
     app = web.Application()
+    dp = Dispatcher()
 
-    bots = []  # список (bot, dispatcher)
+    bots = []
 
-    # ⚠️ ПРИМЕР (у тебя уже есть своя логика)
-    # bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    # dp = Dispatcher()
-    # dp.include_router(router)
-    # bots.append((bot, dp))
+    # пример
+    bot = Bot(
+        token=os.environ["TOKEN_NEZABUDKA"],
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    )
 
-    for bot, dp in bots:
-        # 1. Регистрируем handler
-        SimpleRequestHandler(
-            dispatcher=dp,
-            bot=bot,
-        ).register(app, path=f"/webhook/{bot.token}")
+    from bots.nezabudka.handlers import router
+    dp.include_router(router)
 
-        # 2. Регистрируем dispatcher
-        setup_application(app, dp)
+    bots.append(bot)
 
-        # 3. Вешаем webhook
-        await bot.set_webhook(
-            url=f"{BASE_URL}/webhook/{bot.token}"
-        )
+    # webhook handler
+    SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bots,
+    ).register(app, path="/webhook")
+
+    setup_application(app, dp)
+
+    for bot in bots:
+        await bot.set_webhook(f"{BASE_URL}/webhook")
 
     runner = web.AppRunner(app)
     await runner.setup()
-
-    site = web.TCPSite(runner, host="0.0.0.0", port=PORT)
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
 
-    print(f"🚀 Webhook сервер запущен на порту {PORT}", flush=True)
-
-    # держим процесс живым
+    print("🚀 Webhook сервер запущен", flush=True)
     await asyncio.Event().wait()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
