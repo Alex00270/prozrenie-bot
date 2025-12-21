@@ -2,85 +2,71 @@ import asyncio
 import logging
 import sys
 import os
-from aiohttp import web # <--- НУЖНО ДЛЯ ОБМАНА RENDER
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-# ИМПОРТЫ РОУТЕРОВ
+# Импортируем роутеры
 from bots.prozrenie.handlers import router as prozrenie_router
 from bots.angry_bot.handlers import router as angry_router
 from bots.staff_bot.handlers import router as staff_router
+from bots.ai_team.handlers import router as ai_team_router 
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
-# --- ФУНКЦИЯ-ОБМАНКА ДЛЯ RENDER ---
-async def health_check(request):
-    return web.Response(text="Bot is alive! 🤖")
-
-async def start_dummy_server():
-    # Render сам передает порт через переменную PORT. Если нет - берем 8080.
-    port = int(os.getenv("PORT", 8080))
-    
-    app = web.Application()
-    app.router.add_get('/', health_check)
-    
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    
-    print(f"🌍 FAKE SERVER STARTED ON PORT {port}", flush=True)
-    await site.start()
-# ----------------------------------
-
 async def main():
-    print("🚀 ЗАПУСК МУЛЬТИ-БОТ СИСТЕМЫ...", flush=True)
+    # 1. Читаем токены СТРОГО по скриншоту Render Environment
+    token_prozrenie = os.getenv("TOKEN")         #
+    token_staff     = os.getenv("TOKEN_STAFF")   #
+    token_skeptic   = os.getenv("BOT_TOKEN_2")   # <--- ВОТ ТУТ БЫЛА ОШИБКА
+    token_ai_team   = os.getenv("TOKEN_AI_TEAM") #
 
-    # Читаем токены
-    token_prozrenie = os.getenv("TOKEN")
-    token_skeptic = os.getenv("BOT_TOKEN_2") or os.getenv("TOKEN_2")
-    token_staff = os.getenv("TOKEN_STAFF")
+    # 2. Конфигурация ботов
+    # Здесь мы связываем конкретный токен с конкретным роутером (логикой)
+    bots_config = [
+        # Стратег (Прозрение)
+        {"name": "Prozrenie", "token": token_prozrenie, "router": prozrenie_router},
+        
+        # Кассир (Staff)
+        {"name": "StaffBot",  "token": token_staff,     "router": staff_router},
+        
+        # Скептик (Angry) - используем BOT_TOKEN_2
+        {"name": "Skeptic",   "token": token_skeptic,   "router": angry_router},
+        
+        # Консилиум (AI Team)
+        {"name": "AI_Team",   "token": token_ai_team,   "router": ai_team_router},
+    ]
 
-    tasks = [] 
+    tasks = []
 
-    # 1. ЗАПУСКАЕМ ФЕЙКОВЫЙ СЕРВЕР (ОБЯЗАТЕЛЬНО ПЕРВЫМ)
-    tasks.append(start_dummy_server())
+    # 3. Инициализация и запуск
+    print("DEBUG: Начинаю инициализацию ботов...", flush=True)
 
-    # --- БОТ 1: СТРАТЕГ ---
-    if token_prozrenie:
-        bot_prozrenie = Bot(token=token_prozrenie, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-        dp_prozrenie = Dispatcher()
-        dp_prozrenie.include_router(prozrenie_router)
-        await bot_prozrenie.delete_webhook(drop_pending_updates=True)
-        tasks.append(dp_prozrenie.start_polling(bot_prozrenie))
-        print("✅ Бот 'СТРАТЕГ' добавлен в задачи")
+    for bot_conf in bots_config:
+        if bot_conf["token"]:
+            try:
+                # Создаем экземпляр бота
+                bot = Bot(token=bot_conf["token"], default=DefaultBotProperties(parse_mode=ParseMode.Markdown))
+                dp = Dispatcher()
+                dp.include_router(bot_conf["router"])
+                
+                # Удаляем вебхук, чтобы не было конфликтов с предыдущими запусками
+                await bot.delete_webhook(drop_pending_updates=True)
+                
+                # Добавляем задачу polling в список
+                tasks.append(dp.start_polling(bot))
+                print(f"✅ Бот [{bot_conf['name']}] успешно добавлен в очередь запуска.", flush=True)
+            except Exception as e:
+                print(f"❌ CRITICAL ERROR: Не удалось создать бота [{bot_conf['name']}]. Ошибка: {e}", flush=True)
+        else:
+            print(f"⚠️ WARNING: Токен для [{bot_conf['name']}] не найден в переменных окружения!", flush=True)
 
-    # --- БОТ 2: КАССИР ---
-    if token_staff:
-        bot_staff = Bot(token=token_staff, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-        dp_staff = Dispatcher()
-        dp_staff.include_router(staff_router)
-        await bot_staff.delete_webhook(drop_pending_updates=True)
-        tasks.append(dp_staff.start_polling(bot_staff))
-        print("✅ Бот 'КАССИР' добавлен в задачи")
-    else:
-        print("❌ ОШИБКА: TOKEN_STAFF не найден!")
+    if not tasks:
+        print("❌ FATAL: Нет ни одного активного бота для запуска. Проверьте .env!", flush=True)
+        return
 
-    # --- БОТ 3: СКЕПТИК ---
-    if token_skeptic:
-        bot_skeptic = Bot(token=token_skeptic, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-        dp_skeptic = Dispatcher()
-        dp_skeptic.include_router(angry_router)
-        await bot_skeptic.delete_webhook(drop_pending_updates=True)
-        tasks.append(dp_skeptic.start_polling(bot_skeptic))
-        print("✅ Бот 'СКЕПТИК' добавлен в задачи")
-
-    # ЗАПУСК ВСЕГО
-    if len(tasks) > 1:
-        print(f"🔥 Запускаем {len(tasks)} процессов (Сервер + Боты)...", flush=True)
-        await asyncio.gather(*tasks)
-    else:
-        print("💀 Ничего не запущено.")
+    print(f"🚀 ЗАПУСК СИСТЕМЫ: Стартуем {len(tasks)} ботов одновременно.", flush=True)
+    await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
     try:
