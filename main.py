@@ -7,7 +7,11 @@ from aiogram.enums import ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 PORT = int(os.environ.get("PORT", 10000))
-BASE_URL = os.environ["BASE_URL"]
+BASE_URL = os.environ.get(
+    "BASE_URL",
+    f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}"
+)
+
 
 async def main():
     app = web.Application()
@@ -34,8 +38,10 @@ async def main():
 
     setup_application(app, dp)
 
-    for bot in bots:
-        await bot.set_webhook(f"{BASE_URL}/webhook")
+   for bot in bots:
+    await bot.delete_webhook(drop_pending_updates=True)
+    await bot.set_webhook(f"{BASE_URL}/webhook")
+
 
     runner = web.AppRunner(app)
     await runner.setup()
