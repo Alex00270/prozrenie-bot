@@ -2,60 +2,46 @@ import os
 import httpx
 import logging
 
-# Читаем конфиги. Если их нет - падаем с ошибкой сразу, а не потом.
-GATEWAY_URL = os.getenv("GATEWAY_BASE_URL", "http://172.86.90.213:3000/v1")
-GATEWAY_KEY = os.getenv("GATEWAY_API_KEY", "sk-gateway-alex-2025")
-
 async def call_agent(role, prompt):
-    """
-    Отправляет запрос агенту через API Gateway в Далласе.
-    """
-    # 1. Загружаем системный промпт
-    # Используем os.path.join для совместимости с любой ОС (Linux/Windows/Mac)
-    profile_path = os.path.join(os.getcwd(), "bots", "ai_team", "profiles", f"{role}.txt")
+    # Строим путь: папка бота / profiles / role.txt
+    # Render запускает код из корня, поэтому путь относительный
+    current_dir = os.path.dirname(__file__)
+    profile_path = os.path.join(current_dir, "profiles", f"{role}.txt")
     
-    system_instruction = "Ты полезный помощник."
+    system_instruction = "Ты полезный ассистент."
+    
+    # Читаем твои файлы
     if os.path.exists(profile_path):
         with open(profile_path, "r", encoding="utf-8") as f:
             system_instruction = f.read()
     else:
-        logging.error(f"CRITICAL: Профиль {role} не найден по пути {profile_path}")
-        return f"⚠️ Ошибка: Профиль сотрудника '{role}' утерян."
+        logging.warning(f"⚠️ Профиль {role} не найден по пути {profile_path}")
 
-    # 2. Формируем тело запроса (OpenAI-compatible)
+    # Данные из Render
+    gateway_url = os.getenv("GATEWAY_BASE_URL")
+    api_key = os.getenv("GATEWAY_API_KEY")
+    
+    if not gateway_url:
+        return "❌ Ошибка: Нет GATEWAY_BASE_URL в настройках."
+
     payload = {
-        "model": "auto", 
+        "model": "gemini-2.0-flash-exp", # Или "gpt-4o"
         "messages": [
             {"role": "system", "content": system_instruction},
             {"role": "user", "content": prompt}
         ]
     }
-    
-    headers = {
-        "Authorization": f"Bearer {GATEWAY_KEY}",
-        "Content-Type": "application/json"
-    }
 
-    # 3. Выполняем запрос
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        try:
             resp = await client.post(
-                f"{GATEWAY_URL}/chat/completions", 
-                json=payload, 
-                headers=headers
+                f"{gateway_url}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json=payload
             )
-            
-            # Обработка HTTP ошибок
-            if resp.status_code != 200:
-                logging.error(f"Gateway Error {resp.status_code}: {resp.text}")
-                return f"⚠️ Агент {role} недоступен (Gateway Error {resp.status_code})."
-            
-            data = resp.json()
-            return data['choices'][0]['message']['content']
-
-    except httpx.RequestError as e:
-        logging.error(f"Network Error calling {role}: {e}")
-        return f"⚠️ Шлюз в Далласе не отвечает: {str(e)}"
-    except Exception as e:
-        logging.error(f"Unknown Error calling {role}: {e}")
-        return f"⚠️ Внутренняя ошибка агента: {str(e)}"
+            if resp.status_code == 200:
+                return resp.json()["choices"][0]["message"]["content"]
+            else:
+                return f"Ошибка шлюза: {resp.status_code}"
+        except Exception as e:
+            return f"Ошибка сети: {str(e)}"
