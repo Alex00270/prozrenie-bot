@@ -7,11 +7,22 @@ from aiogram.enums import ParseMode
 logger = logging.getLogger(__name__)
 
 # Gateway настройки
-GATEWAY_URL = os.getenv("GATEWAY_BASE_URL", "http://172.86.90.213:3000/v1/chat/completions")
-AI_TOKEN = os.getenv("AI_TOKEN", "nezabudka-ai-dallas-primary-772")  # ← ДОБАВЛЕНО
+GATEWAY_URL = os.getenv("GATEWAY_BASE_URL", "http://172.86.90.213:3000/v1")
+AI_TOKEN = os.getenv("AI_TOKEN")  # Без дефолта!
+
+# Проверка обязательных переменных
+if not AI_TOKEN:
+    logger.error("❌ AI_TOKEN not set! Gateway requests will fail.")
 
 
 async def ask_brain(sys_prompt: str, user_text: str, model: str = "auto"):
+    """
+    Запрос к AI Gateway с правильной авторизацией
+    """
+    if not AI_TOKEN:
+        logger.error("AI_TOKEN missing")
+        return "Ошибка: AI_TOKEN не настроен", "error", "none"
+    
     payload = {
         "model": model,
         "messages": [
@@ -21,7 +32,6 @@ async def ask_brain(sys_prompt: str, user_text: str, model: str = "auto"):
         "temperature": 0.7
     }
     
-    # ← ДОБАВЛЕНО: Headers с авторизацией
     headers = {
         "Authorization": f"Bearer {AI_TOKEN}",
         "Content-Type": "application/json"
@@ -29,10 +39,8 @@ async def ask_brain(sys_prompt: str, user_text: str, model: str = "auto"):
     
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            # Исправляем URL, если он обрезан
             url = GATEWAY_URL if "/chat/completions" in GATEWAY_URL else f"{GATEWAY_URL.rstrip('/')}/chat/completions"
             
-            # ← ИЗМЕНЕНО: Добавлены headers
             response = await client.post(url, json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()
@@ -42,9 +50,8 @@ async def ask_brain(sys_prompt: str, user_text: str, model: str = "auto"):
             return content, model_info, "Gateway"
             
     except httpx.HTTPStatusError as e:
-        # Более детальная ошибка для отладки
-        logger.error(f"Gateway HTTP error {e.response.status_code}: {e.response.text}")
-        return f"Ошибка Шлюза: {e.response.status_code} - {e.response.text}", "error", "none"
+        logger.error(f"Gateway HTTP {e.response.status_code}: {e.response.text}")
+        return f"Ошибка Шлюза: {e.response.status_code}", "error", "none"
     except Exception as e:
         logger.error(f"Gateway error: {e}")
         return f"Ошибка Шлюза: {str(e)}", "error", "none"
@@ -52,13 +59,13 @@ async def ask_brain(sys_prompt: str, user_text: str, model: str = "auto"):
 
 async def safe_reply(message: Message, header: str, content: str, model_info: str, reply_markup=None):
     """
-    Универсальная отправка с нарезкой текста и поддержкой кнопок.
+    Универсальная отправка с нарезкой текста и поддержкой кнопок
     """
     safe_content = content.replace("<br>", "\n").replace("<br/>", "\n")
     footer = f"\n\n⚙️ _{model_info}_"
     full_text = f"{header}\n\n{safe_content}{footer}"
     
-    # Нарезка
+    # Нарезка на чанки по 4096 символов
     chunks = []
     temp_text = full_text
     while temp_text:
@@ -72,7 +79,7 @@ async def safe_reply(message: Message, header: str, content: str, model_info: st
         chunks.append(temp_text[:cut_index])
         temp_text = temp_text[cut_index:]
     
-    # Отправка
+    # Отправка с fallback парсингом
     for i, chunk in enumerate(chunks):
         current_markup = reply_markup if i == len(chunks) - 1 else None
         try:
