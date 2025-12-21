@@ -21,16 +21,16 @@ async def main():
     # bots.append((bot, dp))
 
     for bot, dp in bots:
-        SimpleRequestHandler(
-            dispatcher=dp,
-            bot=bot,
-        ).register(app, path=f"/webhook/{bot.token}")
+    SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot,
+    ).register(app, path=f"/webhook/{bot.token}")
 
-        await bot.set_webhook(
-            url=f"https://prozrenie-bot.onrender.com/webhook/{bot.token}"
-        )
+    setup_application(app, dp)  # ✅ ВАЖНО: ВНУТРИ ЦИКЛА
 
-    setup_application(app, [dp for _, dp in bots])
+    await bot.set_webhook(
+        url=f"{BASE_URL}/webhook/{bot.token}"
+    )
 
     runner = web.AppRunner(app)
     await runner.setup()
