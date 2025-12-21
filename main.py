@@ -74,22 +74,7 @@ async def main():
         await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    
-    # Функция для чистого выхода
-    def stop_all():
-        print("DEBUG: Получен сигнал остановки. Выгружаем ботов...", flush=True)
-        # Останавливаем все задачи в loop
-        for task in asyncio.all_tasks(loop):
-            task.cancel() #
-
-    # Вешаем обработчики на сигналы Render (SIGTERM и SIGINT)
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, stop_all) #
-
     try:
-        loop.run_until_complete(main()) #
-    except asyncio.CancelledError:
-        print("DEBUG: Все процессы ботов успешно остановлены.", flush=True)
-    finally:
-        loop.close() #
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
+        print("DEBUG: Bots stopped.", flush=True)
