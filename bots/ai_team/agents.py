@@ -2,33 +2,42 @@ import os
 import httpx
 import logging
 
-async def call_agent(role, prompt):
-    # Строим путь: папка бота / profiles / role.txt
-    # Render запускает код из корня, поэтому путь относительный
+async def call_agent(role, prompt, previous_context=""):
+    """
+    Возвращает: (текст_ответа, реальное_имя_модели)
+    """
     current_dir = os.path.dirname(__file__)
     profile_path = os.path.join(current_dir, "profiles", f"{role}.txt")
     
     system_instruction = "Ты полезный ассистент."
-    
-    # Читаем твои файлы
     if os.path.exists(profile_path):
         with open(profile_path, "r", encoding="utf-8") as f:
             system_instruction = f.read()
-    else:
-        logging.warning(f"⚠️ Профиль {role} не найден по пути {profile_path}")
 
-    # Данные из Render
+    # СБОРКА КОНТЕКСТА
+    if previous_context:
+        full_user_content = (
+            f"=== КОНТЕКСТ И МНЕНИЯ КОЛЛЕГ ===\n{previous_context}\n"
+            f"================================\n\nТВОЯ ЗАДАЧА:\n{prompt}"
+        )
+    else:
+        full_user_content = prompt
+
     gateway_url = os.getenv("GATEWAY_BASE_URL")
     api_key = os.getenv("GATEWAY_API_KEY")
     
+    # ВОТ ТУТ ГИБКОСТЬ:
+    # Бот берет модель из Render. Если там пусто — просит "auto".
+    requested_model = os.getenv("MODEL_NAME", "auto")
+
     if not gateway_url:
-        return "❌ Ошибка: Нет GATEWAY_BASE_URL в настройках."
+        return "❌ Ошибка: Нет GATEWAY_BASE_URL", "System"
 
     payload = {
-        "model": "gemini-2.0-flash-exp", # Или "gpt-4o"
+        "model": requested_model,
         "messages": [
             {"role": "system", "content": system_instruction},
-            {"role": "user", "content": prompt}
+            {"role": "user", "content": full_user_content}
         ]
     }
 
@@ -39,9 +48,15 @@ async def call_agent(role, prompt):
                 headers={"Authorization": f"Bearer {api_key}"},
                 json=payload
             )
+            
             if resp.status_code == 200:
-                return resp.json()["choices"][0]["message"]["content"]
+                data = resp.json()
+                content = data["choices"][0]["message"]["content"]
+                # ФАКТ: Какая модель реально сгенерировала это
+                real_model = data.get("model", requested_model)
+                return content, real_model
             else:
-                return f"Ошибка шлюза: {resp.status_code}"
+                return f"⚠️ Ошибка шлюза: {resp.status_code}", "Error"
+                
         except Exception as e:
-            return f"Ошибка сети: {str(e)}"
+            return f"⚠️ Ошибка сети: {str(e)}", "Network"
