@@ -7,30 +7,33 @@ from aiogram.enums import ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 PORT = int(os.environ.get("PORT", 10000))
+BASE_URL = os.environ.get("BASE_URL", "https://prozrenie-bot.onrender.com")
 
 async def main():
     app = web.Application()
 
-    bots = []   # список (bot, dispatcher)
+    bots = []  # список (bot, dispatcher)
 
-    # --- тут твоя логика поиска ботов ---
-    # пример:
+    # ⚠️ ПРИМЕР (у тебя уже есть своя логика)
     # bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     # dp = Dispatcher()
     # dp.include_router(router)
     # bots.append((bot, dp))
 
     for bot, dp in bots:
-    SimpleRequestHandler(
-        dispatcher=dp,
-        bot=bot,
-    ).register(app, path=f"/webhook/{bot.token}")
+        # 1. Регистрируем handler
+        SimpleRequestHandler(
+            dispatcher=dp,
+            bot=bot,
+        ).register(app, path=f"/webhook/{bot.token}")
 
-    setup_application(app, dp)  # ✅ ВАЖНО: ВНУТРИ ЦИКЛА
+        # 2. Регистрируем dispatcher
+        setup_application(app, dp)
 
-    await bot.set_webhook(
-        url=f"{BASE_URL}/webhook/{bot.token}"
-    )
+        # 3. Вешаем webhook
+        await bot.set_webhook(
+            url=f"{BASE_URL}/webhook/{bot.token}"
+        )
 
     runner = web.AppRunner(app)
     await runner.setup()
@@ -40,7 +43,7 @@ async def main():
 
     print(f"🚀 Webhook сервер запущен на порту {PORT}", flush=True)
 
-    # ⛔️ ВАЖНО: держим процесс живым
+    # держим процесс живым
     await asyncio.Event().wait()
 
 
