@@ -1,66 +1,70 @@
 # database.py
 import os
 import asyncio
-import asyncpg
 from motor.motor_asyncio import AsyncIOMotorClient
 
 
 class Database:
     def __init__(self):
-        self.pool = None
+        self.mongo_uri = os.getenv("MONGO_URI")
+        self.mongo_db_name = "nezabudka_prod"
+
         self.mongo_client = None
         self.mongo_db = None
 
-        self.pg_url = os.getenv("DATABASE_URL")
-        self.mongo_uri = os.getenv("MONGO_URI")
+        print("DB INIT =====================", flush=True)
+        print("Mongo URI exists:", bool(self.mongo_uri), flush=True)
+        print("Mongo DB name:", self.mongo_db_name, flush=True)
 
-        print("DB INIT ----------------", flush=True)
-        print("Postgres URL:", bool(self.pg_url), flush=True)
-        print("Mongo URI:", bool(self.mongo_uri), flush=True)
+    async def connect(self):
+        if self.mongo_db is not None:
+            return
 
-    async def connect_mongo(self):
-        if self.mongo_client or not self.mongo_uri:
+        if not self.mongo_uri:
+            print("⛔ MONGO_URI is NOT set", flush=True)
             return
 
         try:
             print("DB: connecting to MongoDB...", flush=True)
+
             self.mongo_client = AsyncIOMotorClient(
                 self.mongo_uri,
                 serverSelectionTimeoutMS=3000,
                 connectTimeoutMS=3000,
                 tlsAllowInvalidCertificates=True,
             )
-            self.mongo_db = self.mongo_client["nezabudka_ai"]
+
+            # ВАЖНО: НЕ делаем await здесь — motor ленивый
+            self.mongo_db = self.mongo_client[self.mongo_db_name]
+
             print("DB: MongoDB client created", flush=True)
 
         except Exception as e:
-            print("DB: Mongo init ERROR:", e, flush=True)
+            print("⛔ Mongo init error:", e, flush=True)
 
-    async def add_task(self, task_data: dict):
+    async def add_task(self, task_doc: dict):
         print("DB: add_task() called", flush=True)
 
-        # ❗️ Коннектим Mongo ЯВНО и ОДИН раз
         if self.mongo_db is None:
-            await self.connect_mongo()
+            await self.connect()
 
         if self.mongo_db is None:
-            print("DB: Mongo unavailable, skipping insert", flush=True)
+            print("⛔ Mongo unavailable — task NOT saved", flush=True)
             return None
 
         try:
-            # ❗️ КЛЮЧЕВО: таймаут, чтобы UX не умирал
             result = await asyncio.wait_for(
-                self.mongo_db.tasks.insert_one(task_data),
+                self.mongo_db.tasks.insert_one(task_doc),
                 timeout=3
             )
-            print("DB: task inserted:", result.inserted_id, flush=True)
+            print("✅ Task saved:", result.inserted_id, flush=True)
             return result.inserted_id
 
         except asyncio.TimeoutError:
-            print("DB: Mongo INSERT TIMEOUT", flush=True)
+            print("⛔ Mongo INSERT TIMEOUT", flush=True)
 
         except Exception as e:
-            print("DB: Mongo INSERT ERROR:", e, flush=True)
+            print("⛔ Mongo INSERT ERROR:", e, flush=True)
 
         return None
 
