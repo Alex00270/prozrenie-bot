@@ -30,10 +30,12 @@ class Database:
 
         # 2. ПОДКЛЮЧЕНИЕ К MONGO (специально для Незабудки)
         if not self.mongo_client and self.mongo_uri:
-            print(f"DEBUG DB. Connecting to MongoDB...", flush=True)
             try:
-                self.mongo_client = AsyncIOMotorClient(self.mongo_uri)
-                # Из твоего скриншота Render: база называется nezabudka_ai
+                # SSL fix для Render
+                self.mongo_client = AsyncIOMotorClient(
+                    self.mongo_uri, 
+                    tlsAllowInvalidCertificates=True
+                )
                 self.mongo_db = self.mongo_client["nezabudka_ai"]
                 print("DEBUG DB. MongoDB connected", flush=True)
             except Exception as e:
