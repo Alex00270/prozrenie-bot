@@ -13,7 +13,7 @@ from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, C
 from aiogram.filters import Command, CommandObject
 
 from utils.ai_engine import ask_brain, safe_reply
-from database import db
+from .database import db
 
 router = Router()
 
